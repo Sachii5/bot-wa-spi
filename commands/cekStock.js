@@ -25,8 +25,10 @@ module.exports = {
                     st_saldoakhir as "STOCK",
                     prd_frac as "FRAC"
                 from tbmaster_stock
-                join tbmaster_prodmast on st_prdcd = prd_prdcd
-                where st_prdcd ILIKE $1 or prd_deskripsipanjang ILIKE $1
+                left join tbmaster_prodmast on st_prdcd = prd_prdcd
+                where prd_recordid is null 
+                  and (st_prdcd ILIKE $1 or prd_deskripsipanjang ILIKE $1)
+                  and st_lokasi = '01'
                 limit 15;
             `;
             

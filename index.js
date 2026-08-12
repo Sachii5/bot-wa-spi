@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
@@ -26,23 +26,33 @@ async function connectToWhatsApp() {
     try {
         console.log('=== Memulai Bot WhatsApp ===');
         const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+        const { version, isLatest } = await fetchLatestBaileysVersion();
+        console.log(`Menggunakan WA v${version.join('.')}, isLatest: ${isLatest}`);
         
         const sock = makeWASocket({
+            version,
             auth: state,
             printQRInTerminal: false, 
-            logger: pino({ level: 'silent' })
+            logger: pino({ level: 'error' })
         });
 
         sock.ev.on('creds.update', saveCreds);
 
         sock.ev.on('connection.update', (update) => {
+            console.log('STATUS KONEKSI BERUBAH:', update); // <- Tambahan log untuk debug
             const { connection, lastDisconnect, qr } = update;
             
             if (qr) qrcode.generate(qr, { small: true });
 
             if (connection === 'close') {
                 const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== 401;
-                if (shouldReconnect) connectToWhatsApp();
+                
+                console.error('Alasan terputus:', lastDisconnect?.error?.message || lastDisconnect?.error || 'Tidak ada info error');
+                
+                if (shouldReconnect) {
+                    console.log('Koneksi terputus, mencoba menghubungkan ulang dalam 3 detik...');
+                    setTimeout(connectToWhatsApp, 3000);
+                }
             } else if (connection === 'open') {
                 console.log(`Mantap! Bot WA udah nyala. Ada ${commands.size} command dimuat 🚀`);
                 
@@ -55,8 +65,34 @@ async function connectToWhatsApp() {
             const msg = m.messages[0];
             if (!msg.message || msg.key.fromMe) return;
 
-            const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
+            let textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
             if (!textMessage) return;
+
+            // --- CEK APAKAH DI GRUP DAN DI-TAG ---
+            const isGroup = msg.key.remoteJid.endsWith('@g.us');
+            
+            // WhatsApp menggunakan dua format ID: nomor telepon biasa (@s.whatsapp.net) dan LID (@lid)
+            const botNumber = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
+            const botLid = sock.user?.lid ? sock.user.lid.split(':')[0] + '@lid' : '';
+
+            if (isGroup) {
+                const mentionedJid = msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [];
+                // Cek apakah ada yang me-mention bot (bisa nomor WA, bisa juga LID bot)
+                const isMentioned = mentionedJid.includes(botNumber) || (botLid && mentionedJid.includes(botLid));
+
+                // Kalau di grup tapi bot tidak di-tag, abaikan pesan
+                if (!isMentioned) return; 
+
+                // Hapus tulisan "@nomorbot" (baik format WA biasa maupun LID) dari teks supaya command terbaca bersih
+                const tag1 = '@' + botNumber.split('@')[0];
+                textMessage = textMessage.replace(new RegExp(tag1, 'g'), '');
+                
+                if (botLid) {
+                    const tag2 = '@' + botLid.split('@')[0];
+                    textMessage = textMessage.replace(new RegExp(tag2, 'g'), '');
+                }
+                textMessage = textMessage.trim();
+            }
 
             // Ambil pesan, ubah jadi huruf kecil, dan hilangkan spasi berlebih
             const textLower = textMessage.toLowerCase().trim();
