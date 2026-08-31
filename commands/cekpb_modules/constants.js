@@ -2,8 +2,8 @@
  * Konstanta dan Konfigurasi Bisnis untuk Command cekpb V1
  */
 
-// 1. Daftar Salesman Resmi
-const VALID_SALESMEN = ['ABD', 'DRI', 'FRH', 'HRS', 'SAL', 'WAY'];
+// 1. Konfigurasi Cache TTL untuk Daftar Salesman Dinamis (10 Menit)
+const SALESMAN_CACHE_TTL_MS = 10 * 60 * 1000;
 
 // 2. Definisi Status Bisnis dan Pemetaan ke kolom obi_recid
 const STATUS_DEFINITIONS = {
@@ -26,14 +26,14 @@ const STATUS_DEFINITIONS = {
         label: 'Siap packing',
         emoji: '📦',
         recidSql: "o.obi_recid = '2'",
-        aliases: ['packing', 'siap packing', 'siappacking', 'siap-packing', '2']
+        aliases: ['packing', 'siap packing', 'siappacking', 'siap-packing', 'scanning', '2']
     },
     draft: {
         key: 'draft',
         label: 'Siap draft struk',
         emoji: '📝',
         recidSql: "o.obi_recid = '3'",
-        aliases: ['draft', 'draft struk', 'draftstruk', 'siap draft struk', 'siapdraftstruk', '3', 'dsp']
+        aliases: ['draft', 'draft struk', 'draftstruk', 'siap draft struk', 'siapdraftstruk', '3']
     },
     bayar: {
         key: 'bayar',
@@ -47,7 +47,7 @@ const STATUS_DEFINITIONS = {
         label: 'Siap struk',
         emoji: '🧾',
         recidSql: "o.obi_recid = '5'",
-        aliases: ['siapstruk', 'siap struk', 'siap-struk', '5']
+        aliases: ['siapstruk', 'siap struk', 'siap-struk', 'struk', '5']
     },
     selesai: {
         key: 'selesai',
@@ -89,7 +89,7 @@ function getStatusLabelByRecid(recid) {
 const MAX_DETAIL_ROWS = 15;
 
 module.exports = {
-    VALID_SALESMEN,
+    SALESMAN_CACHE_TTL_MS,
     STATUS_DEFINITIONS,
     getStatusLabelByRecid,
     MAX_DETAIL_ROWS

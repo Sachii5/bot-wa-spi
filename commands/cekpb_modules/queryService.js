@@ -3,7 +3,49 @@
  */
 
 const pool = require('../../db');
-const { MAX_DETAIL_ROWS } = require('./constants');
+const { MAX_DETAIL_ROWS, SALESMAN_CACHE_TTL_MS } = require('./constants');
+
+// --- In-Memory Cache untuk Daftar Salesman Dinamis ---
+let cachedSalesmen = [];
+let cacheExpiry = 0;
+
+/**
+ * Mengambil daftar kode salesman aktif dari tbmaster_customer yang sesuai dengan cabang IGR di tbtr_obi_h
+ * @param {boolean} forceRefresh 
+ * @returns {Promise<string[]>}
+ */
+async function getActiveSalesmen(forceRefresh = false) {
+    const now = Date.now();
+    if (!forceRefresh && cachedSalesmen.length > 0 && now < cacheExpiry) {
+        return cachedSalesmen;
+    }
+
+    try {
+        const querySql = `
+            SELECT DISTINCT TRIM(c.cus_nosalesman) AS salesman
+            FROM tbmaster_customer c
+            WHERE c.cus_nosalesman IS NOT NULL 
+              AND TRIM(c.cus_nosalesman) <> ''
+              AND c.cus_kodeigr IN (
+                  SELECT DISTINCT obi_kodeigr 
+                  FROM tbtr_obi_h 
+                  WHERE obi_kodeigr IS NOT NULL
+              )
+            ORDER BY salesman;
+        `;
+        const res = await pool.query(querySql);
+        const list = res.rows
+            .map(r => (r.salesman ? String(r.salesman).trim().toUpperCase() : ''))
+            .filter(Boolean);
+
+        cachedSalesmen = list;
+        cacheExpiry = now + SALESMAN_CACHE_TTL_MS;
+        return cachedSalesmen;
+    } catch (err) {
+        console.error('Error saat mengambil daftar salesman aktif dari database:', err);
+        return cachedSalesmen;
+    }
+}
 
 /**
  * Membangun klausa WHERE dan parameter array dari filter object
@@ -38,7 +80,7 @@ function buildWhereClause(filter) {
 }
 
 /**
- * Mengambil data agregasi/rekap PB
+ * Mengambil data agregasi/rekap PB (dengan relasi cus_kodeigr = obi_kodeigr)
  * @param {object} filter 
  * @returns {Promise<any[]>}
  */
@@ -58,7 +100,9 @@ async function fetchSummaryData(filter) {
             count(o.obi_nopb) filter (where o.obi_recid = '6') as jml_selesai,
             count(o.obi_nopb) filter (where o.obi_recid like 'B%') as jml_batal
         FROM tbtr_obi_h o
-        JOIN tbmaster_customer c ON c.cus_kodemember = o.obi_kdmember
+        JOIN tbmaster_customer c 
+          ON c.cus_kodemember = o.obi_kdmember 
+         AND c.cus_kodeigr = o.obi_kodeigr
         ${whereClause}
         GROUP BY c.cus_nosalesman
         ORDER BY c.cus_nosalesman;
@@ -69,7 +113,7 @@ async function fetchSummaryData(filter) {
 }
 
 /**
- * Mengambil data detail daftar transaksi PB
+ * Mengambil data detail daftar transaksi PB (dengan relasi cus_kodeigr = obi_kodeigr)
  * @param {object} filter 
  * @param {number} limit 
  * @returns {Promise<{ totalCount: number, rows: any[] }>}
@@ -81,7 +125,9 @@ async function fetchDetailData(filter, limit = MAX_DETAIL_ROWS) {
     const countSql = `
         SELECT count(o.obi_nopb) as total_count
         FROM tbtr_obi_h o
-        JOIN tbmaster_customer c ON c.cus_kodemember = o.obi_kdmember
+        JOIN tbmaster_customer c 
+          ON c.cus_kodemember = o.obi_kdmember 
+         AND c.cus_kodeigr = o.obi_kodeigr
         ${whereClause};
     `;
     const countRes = await pool.query(countSql, params);
@@ -107,7 +153,9 @@ async function fetchDetailData(filter, limit = MAX_DETAIL_ROWS) {
             c.cus_nosalesman,
             (coalesce(o.obi_ttlorder, 0) + coalesce(o.obi_ttlppn, 0) - coalesce(o.obi_ttldiskon, 0)) as harga_ttl
         FROM tbtr_obi_h o
-        JOIN tbmaster_customer c ON c.cus_kodemember = o.obi_kdmember
+        JOIN tbmaster_customer c 
+          ON c.cus_kodemember = o.obi_kdmember 
+         AND c.cus_kodeigr = o.obi_kodeigr
         ${whereClause}
         ORDER BY o.obi_tgltrans DESC, o.obi_nopb DESC
         LIMIT $${limitIndex};
@@ -118,6 +166,7 @@ async function fetchDetailData(filter, limit = MAX_DETAIL_ROWS) {
 }
 
 module.exports = {
+    getActiveSalesmen,
     buildWhereClause,
     fetchSummaryData,
     fetchDetailData
