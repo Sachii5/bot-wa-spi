@@ -1,66 +1,49 @@
-const pool = require('../db'); 
+const { parseArgs } = require('./cekpb_modules/parser');
+const { fetchSummaryData, fetchDetailData } = require('./cekpb_modules/queryService');
+const { formatResult } = require('./cekpb_modules/formatter');
 
 module.exports = {
     name: 'cekpb',
-    description: 'Cek rekapitulasi PB harian',
-    usage: 'cekpb', // <-- TAMBAHAN BARU
+    description: 'Cek rekapitulasi dan detail PB harian atau filter dinamis',
+    usage: 'cekpb [salesman] [status] [tanggal] (Contoh: cekpb ABD selesai 28-08-2026)',
     async execute(sock, msg, args) {
-        await sock.sendMessage(msg.key.remoteJid, { text: 'Sedang memproses rekap data PB hari ini...' });
+        // 1. Parse & Validasi Parameter Input
+        const parseResult = parseArgs(args);
+        if (!parseResult.isValid) {
+            await sock.sendMessage(msg.key.remoteJid, { text: parseResult.error });
+            return;
+        }
+
+        const filter = parseResult.filter;
+
+        // 2. Beri indikator proses ke WhatsApp
+        let waitText = '⏳ Sedang memproses data PB';
+        if (filter.salesman) waitText += ` (Salesman: ${filter.salesman})`;
+        if (filter.status) waitText += ` (Status: ${filter.status.label})`;
+        waitText += ` [${filter.displayDate}]...`;
+
+        await sock.sendMessage(msg.key.remoteJid, { text: waitText });
 
         try {
-            const querySql = `
-                select 
-                    c.cus_nosalesman,
-                    count(o.obi_nopb) filter (where o.obi_recid is null or o.obi_recid not like 'B%') as jml_pb_not_b,
-                    count(o.obi_nopb) filter (where o.obi_recid like 'B%') as jml_pb_b
-                from tbtr_obi_h o
-                join tbmaster_customer c on c.cus_kodemember = o.obi_kdmember
-                where o.obi_tgltrans >= current_date
-                  and o.obi_tgltrans < current_date + interval '1 day'
-                group by c.cus_nosalesman
-                order by c.cus_nosalesman;
-            `;
-            
-            const res = await pool.query(querySql);
-
-            let totalPb = 0;
-            let totalPbBatal = 0;
-            let detailSalesman = '';
-
-            for (const row of res.rows) {
-                const pbNotB = parseInt(row.jml_pb_not_b) || 0;
-                const pbB = parseInt(row.jml_pb_b) || 0;
-                
-                totalPb += pbNotB;
-                totalPbBatal += pbB;
-
-                const salesman = row.cus_nosalesman || 'UNDEFINED';
-                detailSalesman += `┣ *${salesman}:* ${pbNotB}\n`;
-            }
-
-            // Ganti ┣ terakhir menjadi ┗ agar rapi
-            if (detailSalesman.length > 0) {
-                detailSalesman = detailSalesman.slice(0, -1); // Hapus \n terakhir
-                const lastIdx = detailSalesman.lastIndexOf('┣');
-                if (lastIdx !== -1) {
-                    detailSalesman = detailSalesman.substring(0, lastIdx) + '┗' + detailSalesman.substring(lastIdx + 1);
-                }
+            // 3. Eksekusi query database sesuai mode
+            let dbData;
+            if (filter.mode === 'DETAIL_LIST') {
+                dbData = await fetchDetailData(filter);
             } else {
-                detailSalesman = '┗ (Belum ada transaksi hari ini)';
+                dbData = await fetchSummaryData(filter);
             }
 
-            let reply = `*📊 REKAP PB HARIAN*\n`;
-            reply += `*(Tanggal: ${new Date().toLocaleDateString('id-ID')})*\n\n`;
-            reply += `┣ *Total PB:* ${totalPb}\n`;
-            reply += `┣ *Total PB Batal:* ${totalPbBatal}\n\n`;
-            reply += `*Detail per Salesman:*\n`;
-            reply += detailSalesman;
+            // 4. Format hasil query ke teks WhatsApp yang informatif & rapi
+            const replyMessage = formatResult(filter, dbData);
 
-            await sock.sendMessage(msg.key.remoteJid, { text: reply });
+            // 5. Kirim pesan balasan
+            await sock.sendMessage(msg.key.remoteJid, { text: replyMessage });
 
         } catch (dbError) {
             console.error('Error saat query cekpb:', dbError);
-            await sock.sendMessage(msg.key.remoteJid, { text: 'Gagal mengambil data rekap PB.' });
+            await sock.sendMessage(msg.key.remoteJid, { 
+                text: '❌ Terjadi kesalahan sistem saat mengambil data PB. Silakan coba beberapa saat lagi.' 
+            });
         }
     }
 };
