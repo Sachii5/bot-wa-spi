@@ -2,7 +2,7 @@
  * Parameter Parser & Validator untuk Command cekpb V1
  */
 
-const { VALID_SALESMEN, STATUS_DEFINITIONS } = require('./constants');
+const { STATUS_DEFINITIONS } = require('./constants');
 
 /**
  * Validasi dan normalisasi tanggal (DD-MM-YYYY atau DD/MM/YYYY)
@@ -57,9 +57,14 @@ function findStatus(text) {
 /**
  * Parse argumen command cekpb menjadi Filter Object terstruktur
  * @param {string[]} args 
+ * @param {string[]} validSalesmen 
  * @returns {{ isValid: boolean, filter?: object, error?: string }}
  */
-function parseArgs(args) {
+function parseArgs(args, validSalesmen = []) {
+    const normalizedSalesmen = Array.isArray(validSalesmen) 
+        ? validSalesmen.map(s => String(s).trim().toUpperCase()) 
+        : [];
+
     if (!args || args.length === 0) {
         return {
             isValid: true,
@@ -102,10 +107,10 @@ function parseArgs(args) {
         }
     }
 
-    // 2. Ekstrak Salesman (Cari token yang cocok dengan VALID_SALESMEN)
+    // 2. Ekstrak Salesman (Cari token yang cocok dengan daftar validSalesmen dinamis)
     for (let i = 0; i < remainingTokens.length; i++) {
         const token = remainingTokens[i].toUpperCase();
-        if (VALID_SALESMEN.includes(token)) {
+        if (normalizedSalesmen.includes(token)) {
             if (foundSalesman) {
                 return {
                     isValid: false,
@@ -142,17 +147,23 @@ function parseArgs(args) {
     // 4. Jika masih ada sisa token yang tidak dikenali
     if (remainingTokens.length > 0) {
         const unrec = remainingTokens.join(' ');
+        const salesmanDisplay = normalizedSalesmen.length > 0 ? normalizedSalesmen.join(', ') : '(Memuat dari master customer)';
+        
         let errMsg = `❌ Parameter *"${unrec}"* tidak dikenali!\n\n`;
         errMsg += `*💡 PANDUAN PARAMETER CEKPB:*\n`;
-        errMsg += `┣ *Salesman:* ${VALID_SALESMEN.join(', ')}\n`;
+        errMsg += `┣ *Salesman Terdaftar:* ${salesmanDisplay}\n`;
         errMsg += `┣ *Status:* sendhh, picking, packing, draft, bayar, siapstruk, selesai, batal\n`;
         errMsg += `┣ *Tanggal:* DD-MM-YYYY (contoh: 28-08-2026)\n\n`;
         errMsg += `*Contoh Penggunaan:*\n`;
         errMsg += `• *cekpb* (Rekap hari ini)\n`;
-        errMsg += `• *cekpb ABD*\n`;
+        if (normalizedSalesmen.length > 0) {
+            errMsg += `• *cekpb ${normalizedSalesmen[0]}*\n`;
+        }
         errMsg += `• *cekpb selesai*\n`;
         errMsg += `• *cekpb 28-08-2026*\n`;
-        errMsg += `• *cekpb ABD selesai 28-08-2026*`;
+        if (normalizedSalesmen.length > 0) {
+            errMsg += `• *cekpb ${normalizedSalesmen[0]} selesai 28-08-2026*`;
+        }
 
         return {
             isValid: false,
